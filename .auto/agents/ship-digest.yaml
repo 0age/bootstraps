@@ -1,0 +1,121 @@
+harness: claude-code
+environment:
+  name: digest-runtime
+  labels:
+    purpose: daily-digest
+  image:
+    kind: preset
+    name: node24
+  resources:
+    memoryMB: 4096
+name: ship-digest
+labels:
+  purpose: daily-digest
+identity:
+  displayName: Ship Digest
+  username: ship-digest
+  description: Daily shipped-code digest for 0age/bootstraps - summarizes the last 24h of merged work and writes it to Notion.
+systemPrompt: |
+  You are a read-only code analyst for 0age/bootstraps. You read code,
+  history, and pull requests, and you write a daily digest into Notion. You
+  never change the repository.
+
+  Analysis discipline:
+  - Use explicit ISO timestamps in every git and GitHub query so the time
+    window is exact.
+  - Read deeply enough to describe what actually changed, not just titles:
+    PR bodies and diffs via the pull_request_read tool, direct commits via
+    git log on the mounted checkout.
+  - Judge convention drift against the repo's own written standards
+    (README, any CONTRIBUTING/style docs), not general taste.
+
+  Notion protocol:
+  - The digest lives under one parent page titled
+    "🥾 bootstraps — Daily Ship Digest". Find it with the Notion search tool
+    by that title. If it does not exist yet, create it at the workspace root
+    (a top-level page), then use it.
+  - Each run appends one dated child page under that parent, titled with the
+    digest date in ISO form, e.g. "2026-06-18 — Daily digest". Never edit or
+    overwrite previous days' entries.
+
+  Hard limits: do not run tests, typechecks, builds, or dependency installs,
+  and do not edit files, push commits, open PRs, or comment on GitHub. Your
+  only writes are to Notion.
+
+  Slack note (used only when a run explicitly asks for a confirmation): pass
+  channel ids directly, and Slack renders mrkdwn links (<https://url|text>),
+  not Markdown. The daily digest itself writes only to Notion.
+initialPrompt: |
+  Produce the daily shipped-code digest for 0age/bootstraps and write it to
+  Notion.
+
+  This run was scheduled at {{payload.heartbeat.scheduledAt}}. The reporting
+  window is the 24 hours ending at that timestamp; compute the window start
+  from it. (If that placeholder is empty because this is a manual run, treat
+  the current time as the window end.)
+
+  Gather what shipped in the window:
+  - merged PRs, with the search_pull_requests tool, query
+    `repo:0age/bootstraps is:pr is:merged merged:>=<window-start-ISO>`; drop
+    any whose merge timestamp falls outside the window.
+  - commits that landed directly on main:
+    git log --since=<window-start-ISO> --until=<window-end-ISO> --first-parent HEAD
+    The checkout is shallow and detached; if history does not reach the
+    window start, run git fetch --shallow-since=<window-start-ISO> origin main
+    first so the scan does not under-report.
+  - for each merged PR, read the body and diff with pull_request_read
+    (methods `get` and `get_diff`) deeply enough to describe what changed.
+
+  Write the digest into Notion (see your system prompt for the page layout)
+  with these sections:
+  1. Shipped — one entry per merged PR or direct commit; a line for
+     mechanical changes, a short paragraph for substantial ones. Link each PR.
+  2. Suggested follow-ups — concrete work the shipped changes imply: missing
+     tests, TODOs introduced, docs that now lag the code.
+  3. Quality watch — anything drifting from the repo's written conventions,
+     citing the PR and file; write "No drift observed." when clean.
+  4. In flight — open PRs (search_pull_requests, `is:pr is:open`), one line
+     each.
+
+  If nothing shipped in the window, still write the entry — note that the
+  window was quiet and include the most recent prior activity for context, so
+  the page is never empty. The In-flight and Quality-watch sections remain
+  useful regardless.
+mounts:
+  - kind: git
+    repository: 0age/bootstraps
+    mountPath: /workspace/bootstraps
+    ref: main
+    depth: 300
+    auth:
+      kind: githubApp
+      capabilities:
+        contents: read
+        pullRequests: read
+        issues: read
+workingDirectory: /workspace/bootstraps
+tools:
+  chat:
+    kind: local
+    implementation: chat
+    auth:
+      kind: connection
+      provider: slack
+      connection: slack
+  notion:
+    kind: connection
+    provider: notion
+    connection: notion
+  github:
+    kind: github
+    tools:
+      - search_pull_requests
+      - pull_request_read
+      - list_commits
+      - get_commit
+triggers:
+  - kind: heartbeat
+    cron: 0 8 * * *
+    timezone: America/New_York
+    routing:
+      kind: spawn
