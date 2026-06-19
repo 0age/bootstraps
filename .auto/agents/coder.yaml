@@ -120,6 +120,29 @@ triggers:
         exists: false
     routing:
       kind: spawn
+  - event: webhook.suggestion.created
+    endpoint: suggestion-intake
+    auth:
+      kind: bearer_token
+      secretRef: suggestion-webhook-secret
+    message: |
+      A website visitor suggested a feature for 0age/bootstraps via the
+      suggestion box.
+
+      Suggestion: {{payload.suggestion}}
+      From: {{payload.name}} ({{payload.email}})
+
+      There is no Slack thread for this request. Implement it end to end per
+      your standing orders: a scoped change on an `auto/<slug>` branch and a
+      pull request against main with a Review Map. Record PR ownership with
+      auto.artifacts.record. When the PR is open, post a short note to Slack
+      channel C0B9YK33VLN with the suggestion and the PR link.
+
+      If the suggestion is vague or out of scope, make a reasonable, minimal
+      interpretation and state your assumptions in the PR description rather
+      than doing nothing.
+    routing:
+      kind: spawn
   - events:
       - chat.message.mentioned
       - chat.message.subscribed
