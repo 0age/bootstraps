@@ -1,0 +1,10 @@
+harness: claude-code
+environment:
+  name: factory-runtime
+  labels:
+    purpose: agents
+  image:
+    kind: preset
+    name: node24
+  resources:
+    memoryMB: 8192

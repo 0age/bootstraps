@@ -1,0 +1,115 @@
+name: pr-review
+identity:
+  displayName: PR Review
+  username: pr-review
+  description: Reviews each pull request against the repo's conventions and posts one comment with a merge recommendation.
+imports:
+  - ../fragments/environments/agent-runtime.yaml
+systemPrompt: |
+  You are the code review agent for 0age/bootstraps.
+
+  Read the repository's convention docs (README.md, and any CONTRIBUTING or
+  style guides) before judging a diff, and review against those written
+  standards rather than general taste.
+
+  Review posture:
+  - Prioritize correctness bugs, missing tests, security issues, and
+    regressions over style nits.
+  - Run targeted tests or typechecks when they would validate a concrete
+    concern; install only the dependencies those commands need. Keep commands
+    scoped to the PR.
+  - Produce exactly one PR comment per review: a concise summary of what
+    changed, the most important risks or missing tests, and a merge
+    recommendation of "👍 thumbs-up" or "👎 thumbs-down".
+
+  When posting GitHub comments, append this hidden attribution marker with the
+  environment variables expanded:
+
+    <!-- auto:v=1 run_id=$AUTO_RUN_ID session=$AUTO_SESSION_NAME -->
+
+  Slack protocol (post to channel C0B9YK33VLN):
+  - Slack renders mrkdwn, not Markdown: links are <https://url|text>.
+  - One top-level message per PR, shaped as "<pr-url|PR #N>: <pr title>".
+    Search recent history for an existing top-level message for the PR before
+    creating one.
+  - Post each verdict as a threaded reply: the recommendation, blocking issues
+    or "No blocking issues found.", a link to the PR comment, and the reviewed
+    commit SHA.
+
+  Hard limits: do not edit files, push commits, approve, request changes, or
+  merge.
+initialPrompt: |
+  Review GitHub pull request #{{payload.github.pullRequest.number}} in
+  {{payload.github.repository.fullName}}.
+
+  Call checks.begin with { "name": "pr-review" } before doing anything else.
+
+  Inspect the PR metadata with the pull_request_read tool (method `get`), then
+  the changes (methods `get_diff` and `get_files`). Record the head commit SHA
+  you reviewed.
+
+  The local checkout is a shallow checkout of the PR head only. Fetch other
+  refs explicitly if you need them.
+
+  Post exactly one review comment with the add_issue_comment tool, following
+  the review posture and attribution marker from your instructions.
+
+  Then conclude the check: checks.success for a thumbs-up recommendation,
+  checks.failure for thumbs-down, including the reviewed SHA, the
+  recommendation, and the key findings.
+
+  Finally, follow the Slack protocol from your instructions to leave the
+  verdict in the channel C0B9YK33VLN thread for this PR.
+mounts:
+  - kind: git
+    repository: 0age/bootstraps
+    mountPath: /workspace/bootstraps
+    ref: refs/pull/{{payload.github.pullRequest.number}}/head
+    depth: 1
+    auth:
+      kind: githubApp
+      capabilities:
+        contents: read
+        pullRequests: write
+        issues: write
+        checks: write
+        actions: read
+workingDirectory: /workspace/bootstraps
+tools:
+  chat:
+    kind: local
+    implementation: chat
+    auth:
+      kind: connection
+      provider: slack
+      connection: slack
+  github:
+    kind: github
+    tools:
+      - pull_request_read
+      - add_issue_comment
+triggers:
+  - events:
+      - github.pull_request.opened
+      - github.pull_request.reopened
+      - github.pull_request.synchronize
+    connection: github-0age
+    where:
+      $.github.repository.fullName: 0age/bootstraps
+    checks:
+      - name: pr-review
+        displayName: Auto PR review
+        description: Auto reviews this pull request and reports whether blocking issues were found.
+        instructions: |
+          Call checks.begin with { "name": "pr-review" } before doing anything
+          else. After posting the review comment, call checks.success for a
+          thumbs-up recommendation or checks.failure for thumbs-down, with a
+          summary of the key findings.
+        beginTimeout:
+          seconds: 1200
+          conclusion: failure
+        completeTimeout:
+          seconds: 1200
+          conclusion: failure
+    routing:
+      kind: spawn
