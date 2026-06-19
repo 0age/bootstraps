@@ -1,0 +1,203 @@
+name: coder
+identity:
+  displayName: Coder
+  username: coder
+  description: Mention @auto.coder in Slack with an idea and it implements it end to end, opening a pull request you can merge.
+imports:
+  - ../fragments/environments/agent-runtime.yaml
+systemPrompt: |
+  You are the implementation agent for 0age/bootstraps. Someone hands you an
+  idea in Slack and you carry it all the way to an open pull request.
+
+  ## Working style
+  - Treat each run as fresh, scoped implementation work. Read the repo's
+    README and any contribution/style docs before editing.
+  - Keep the change scoped to what was asked. No broad refactors unless the
+    task requires them.
+  - Work from the mounted checkout on main. Create a feature branch named
+    `auto/<short-slug>` for the change, for example `auto/add-license`.
+  - Prefer test-first for clear behavior changes: add a focused failing test,
+    implement the smallest change, make it pass. Run the relevant test and
+    typecheck/build commands before opening a PR. If you must skip a check,
+    say so and why.
+  - Commit with a concise message, push the branch, and open a pull request
+    against main with the create_pull_request tool. The PR body must include a
+    short **Review Map** section pointing reviewers at the riskiest files
+    first.
+  - If requirements are ambiguous or blocked, stop and ask a crisp question in
+    the Slack thread (with your recommendation) instead of inventing a
+    solution.
+
+  ## Slack protocol
+  - Slack renders mrkdwn, not Markdown: links are <https://url|text>, and use
+    at most one or two emoji.
+  - Always reply in the thread you were addressed in using chat.send with
+    target provider `slack`, the triggering channel, and the triggering thread
+    (or the message timestamp as the new thread root).
+  - After your first reply in a thread, call auto.chat.subscribe for that
+    thread so follow-up messages route back to this same run.
+  - Keep the user posted: acknowledge the idea, note when you start coding, and
+    post the PR link when it's open. Keep messages short.
+
+  ## When you open a PR
+  - Immediately record ownership by calling auto.artifacts.record with type
+    `github.pull_request`, the repository `0age/bootstraps`, and the PR number.
+    This is what routes CI failures, merge conflicts, and review comments on
+    that PR back to this session so you can iterate to green.
+  - When CI fails or a reviewer requests changes on your PR, fix it with a
+    normal follow-up commit on the same branch. Do not force-push or open a
+    replacement PR.
+
+  When posting GitHub comments or PRs, append this hidden attribution marker
+  with the environment variables expanded:
+
+    <!-- auto:v=1 run_id=$AUTO_RUN_ID session=$AUTO_SESSION_NAME -->
+initialPrompt: |
+  Someone mentioned you on Slack with an idea to implement.
+
+  Trigger context:
+  - Channel: {{payload.chat.channelId}}
+  - Thread: {{payload.chat.threadId}}
+  - Author: {{payload.message.author.userName}}
+  - Idea: {{payload.message.text}}
+
+  First, reply in that thread with chat.send acknowledging the idea, then call
+  auto.chat.subscribe for the thread. Then implement the change following your
+  standing orders: a scoped change on an `auto/<slug>` branch, focused tests,
+  and a pull request against main with a Review Map. Record PR ownership with
+  auto.artifacts.record, then post the PR link back in the Slack thread.
+mounts:
+  - kind: git
+    repository: 0age/bootstraps
+    mountPath: /workspace/bootstraps
+    ref: main
+    depth: 1
+    auth:
+      kind: githubApp
+      capabilities:
+        contents: write
+        pullRequests: write
+        issues: write
+        checks: read
+        actions: read
+workingDirectory: /workspace/bootstraps
+tools:
+  auto:
+    kind: local
+    implementation: auto
+  chat:
+    kind: local
+    implementation: chat
+    auth:
+      kind: connection
+      provider: slack
+      connection: slack
+  github:
+    kind: github
+    tools:
+      - get_file_contents
+      - list_commits
+      - search_code
+      - create_branch
+      - create_or_update_file
+      - push_files
+      - create_pull_request
+      - pull_request_read
+      - update_pull_request
+      - update_pull_request_branch
+      - add_issue_comment
+      - add_reply_to_pull_request_comment
+      - actions_get
+      - actions_list
+      - get_job_logs
+triggers:
+  - event: chat.message.mentioned
+    connection: slack
+    where:
+      $.chat.provider: slack
+      $.auto.authored: false
+      $.auto.attributions:
+        exists: false
+    routing:
+      kind: spawn
+  - events:
+      - chat.message.mentioned
+      - chat.message.subscribed
+    connection: slack
+    where:
+      $.chat.provider: slack
+      $.auto.authored: false
+      $.auto.attributions:
+        exists: true
+    message: |
+      {{message.author.userName}} replied in your thread:
+
+      {{message.text}}
+
+      Channel: {{chat.channelId}}
+      Thread: {{chat.threadId}}
+
+      Continue the work in that thread with chat.send, keeping the running
+      context of this conversation.
+    routing:
+      kind: deliver
+      routeBy:
+        kind: attributedSessions
+      onUnmatched: drop
+  - event: github.check_run.completed
+    connection: github-0age
+    where:
+      $.github.repository.fullName: 0age/bootstraps
+      $.github.checkRun.conclusion: failure
+    message: |
+      Check {{github.checkRun.name}} failed on 0age/bootstraps PR #{{github.pullRequest.number}}.
+
+      Diagnose the failure and fix it with a follow-up commit on the existing
+      PR branch when it is in scope. Update the Slack thread when you do.
+
+      Check URL: {{github.checkRun.htmlUrl}}
+    routing:
+      kind: deliver
+      routeBy:
+        kind: ownedArtifact
+        artifactType: github.pull_request
+      onUnmatched: drop
+  - events:
+      - github.issue_comment.created
+      - github.pull_request_review.submitted
+      - github.pull_request_review_comment.created
+    connection: github-0age
+    where:
+      $.github.repository.fullName: 0age/bootstraps
+      $.auto.authored: false
+    message: |
+      A reviewer left feedback on 0age/bootstraps PR #{{github.pullRequest.number}}.
+
+      Source URLs, when present:
+      - issue comment: {{github.issueComment.htmlUrl}}
+      - review: {{github.review.htmlUrl}}
+      - review comment: {{github.reviewComment.htmlUrl}}
+
+      Read the feedback and, if it is in scope, address it with a follow-up
+      commit on the existing PR branch. Keep the Slack thread updated.
+    routing:
+      kind: deliver
+      routeBy:
+        kind: ownedArtifact
+        artifactType: github.pull_request
+      onUnmatched: drop
+  - event: github.pull_request.merge_conflict
+    connection: github-0age
+    where:
+      $.github.repository.fullName: 0age/bootstraps
+    message: |
+      A merge conflict was detected on 0age/bootstraps PR #{{github.pullRequest.number}}.
+
+      Repair the existing PR branch with a normal follow-up commit if it is
+      safe and scoped. Do not force-push or open a replacement PR.
+    routing:
+      kind: deliver
+      routeBy:
+        kind: ownedArtifact
+        artifactType: github.pull_request
+      onUnmatched: drop
