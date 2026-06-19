@@ -46,6 +46,43 @@ cd bootstraps
 # 3. Profit 📈
 ```
 
+## 📮 Suggestion site
+
+This repo also hosts a tiny **Next.js (App Router) + TypeScript** "suggestion box"
+at its root. Visitors submit a feature suggestion, and the server forwards it to an
+Auto webhook that spawns an agent to build it.
+
+### Local development
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Configure the webhook env vars
+cp .env.example .env.local
+# then edit .env.local and fill in the two values
+
+# 3. Run the dev server
+npm run dev
+# open http://localhost:3000
+```
+
+The submit form POSTs to `/api/suggest`, a server-only route that adds the bearer
+token and forwards `{ suggestion, name, email }` to the webhook. The token is never
+exposed to the browser.
+
+### Environment variables
+
+Set these locally in `.env.local` and on Vercel (Project → Settings → Environment Variables):
+
+| Variable | Description |
+| --- | --- |
+| `AUTO_SUGGESTION_WEBHOOK_URL` | Auto webhook URL that receives forwarded suggestions. |
+| `AUTO_SUGGESTION_WEBHOOK_TOKEN` | Bearer token sent as `Authorization: Bearer <token>`. Server-only secret. |
+
+If either variable is missing, `/api/suggest` returns a descriptive `500` so the
+misconfiguration is obvious.
+
 ## 🌟 The vibe
 
 This project is unapologetically optimistic about software. It believes that good
